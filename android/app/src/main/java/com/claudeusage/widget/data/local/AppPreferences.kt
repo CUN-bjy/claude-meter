@@ -52,6 +52,11 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_ACCOUNT_HINT_DISMISSED, false)
         set(value) = prefs.edit().putBoolean(KEY_ACCOUNT_HINT_DISMISSED, value).apply()
 
+    /** Set once the post-login "allow notifications?" prompt has been answered. */
+    var notificationPromptShown: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFICATION_PROMPT_SHOWN, false)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFICATION_PROMPT_SHOWN, value).apply()
+
     var coachEnabled: Boolean
         get() = prefs.getBoolean(KEY_COACH_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_COACH_ENABLED, value).apply()
@@ -68,6 +73,7 @@ class AppPreferences(context: Context) {
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_COACH_ENABLED = "coach_enabled"
         private const val KEY_ACCOUNT_HINT_DISMISSED = "account_hint_dismissed"
+        private const val KEY_NOTIFICATION_PROMPT_SHOWN = "notification_prompt_shown"
 
         /**
          * App-level toggle key for the Codex/GPT card. Unlike the other

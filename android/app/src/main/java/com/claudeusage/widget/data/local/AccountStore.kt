@@ -65,6 +65,12 @@ internal class AccountStore<T>(
         return account
     }
 
+    /** Replaces an account's credentials in place, e.g. after a token refresh. */
+    fun updateCredentials(id: String, credentials: T) {
+        val accounts = getAccounts().map { if (it.id == id) it.copy(credentials = credentials) else it }
+        save(accounts, prefs.getString(KEY_ACTIVE_ID, null))
+    }
+
     fun setLabel(id: String, label: String) {
         val accounts = getAccounts().map { if (it.id == id) it.copy(label = label) else it }
         save(accounts, prefs.getString(KEY_ACTIVE_ID, null))

@@ -59,7 +59,10 @@ class CodexUsageRepository {
             val body = response.body?.string() ?: ""
 
             when {
-                response.code == 401 || response.code == 403 -> {
+                isCloudflareChallenge(response, body) -> {
+                    throw CloudflareException(CLOUDFLARE_MESSAGE)
+                }
+                isAuthFailure(response.code, body) -> {
                     throw AuthException("[HTTP ${response.code}] Session expired.\nPlease log in again.")
                 }
                 response.code == 429 -> {
@@ -70,9 +73,6 @@ class CodexUsageRepository {
                 }
                 !response.isSuccessful -> {
                     throw IOException("[HTTP ${response.code}] ${response.message.ifEmpty { "Request failed." }}")
-                }
-                body.contains("Just a moment") || body.contains("Enable JavaScript") -> {
-                    throw CloudflareException("[Cloudflare] Challenge detected.\nPlease try again.")
                 }
                 body.trimStart().startsWith("<") -> {
                     throw IOException("[HTTP ${response.code}] Unexpected HTML response from server.")
@@ -101,7 +101,10 @@ class CodexUsageRepository {
                 val body = response.body?.string() ?: ""
 
                 when {
-                    response.code == 401 || response.code == 403 -> {
+                    isCloudflareChallenge(response, body) -> {
+                        Result.failure(CloudflareException(CLOUDFLARE_MESSAGE))
+                    }
+                    isAuthFailure(response.code, body) -> {
                         Result.failure(AuthException("[HTTP ${response.code}] Invalid session."))
                     }
                     !response.isSuccessful -> {

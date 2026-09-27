@@ -12,6 +12,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private var hiddenMetrics by mutableStateOf<Set<String>>(emptySet())
     private var hiddenGraphSeries by mutableStateOf<Set<String>>(emptySet())
     private var showAccountHint by mutableStateOf(false)
+    private var showNotificationPrompt by mutableStateOf(false)
     private val interstitialAdManager = InterstitialAdManager()
 
     private val loginLauncher = registerForActivityResult(
@@ -69,6 +74,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Permission asked for from the post-login prompt. Granting it only lets
+     * alerts through; it must not switch on the persistent notification,
+     * which stays an explicit opt-in in Settings.
+     */
+    private val alertPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
+    /** Permission asked for by the Persistent Notification toggle itself. */
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -96,15 +111,6 @@ class MainActivity : ComponentActivity() {
         hiddenGraphSeries = appPreferences.hiddenGraphSeries
         showAccountHint = !appPreferences.accountHintDismissed
 
-        // Request notification permission on first launch (Android 13+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-
         // Preload interstitial ad
         interstitialAdManager.load(this)
 
@@ -125,6 +131,35 @@ class MainActivity : ComponentActivity() {
                 val codexState by viewModel.codexState.collectAsState()
                 val claudeAccounts by viewModel.claudeAccounts.collectAsState()
                 val codexAccounts by viewModel.codexAccounts.collectAsState()
+
+                // Ask for notifications once, after the first successful load, with
+                // context, instead of a bare system dialog before the user has signed in
+                val isLoaded = uiState is UiState.Success
+                LaunchedEffect(isLoaded) {
+                    if (isLoaded && shouldAskForNotifications()) showNotificationPrompt = true
+                }
+                if (showNotificationPrompt) {
+                    AlertDialog(
+                        onDismissRequest = ::answerNotificationPrompt,
+                        title = { Text("Allow notifications?") },
+                        text = {
+                            Text(
+                                "Claude Meter can alert you about your usage limits " +
+                                    "(Productivity Coach). You can also show usage in the " +
+                                    "status bar from Settings."
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                answerNotificationPrompt()
+                                alertPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }) { Text("Allow") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = ::answerNotificationPrompt) { Text("Not now") }
+                        }
+                    )
+                }
 
                 when (currentScreen) {
                     Screen.Usage -> {
@@ -276,6 +311,17 @@ class MainActivity : ComponentActivity() {
         if (viewModel.claudeAccounts.value.accounts.isNotEmpty()) return false
         UsageUpdateScheduler.cancel(applicationContext)
         return true
+    }
+
+    private fun shouldAskForNotifications(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !appPreferences.notificationPromptShown &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+
+    private fun answerNotificationPrompt() {
+        showNotificationPrompt = false
+        appPreferences.notificationPromptShown = true
     }
 
     private fun dismissAccountHint() {

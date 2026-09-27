@@ -159,13 +159,17 @@ fun UsageScreen(
                                 tint = ExtendedTheme.colors.textSecondary
                             )
                         }
-                        IconButton(onClick = onSettingsClick) {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                tint = ExtendedTheme.colors.textSecondary
-                            )
-                        }
+                    }
+                    // Always reachable: on an error or after a session expires, Settings
+                    // is where the user switches or removes accounts
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = ExtendedTheme.colors.textSecondary
+                        )
+                    }
+                    if (uiState is UiState.Success) {
                         IconButton(onClick = onRefresh, enabled = !isRefreshing) {
                             if (isRefreshing) {
                                 CircularProgressIndicator(

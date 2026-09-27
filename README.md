@@ -79,8 +79,8 @@ The APK will be at `app/build/outputs/apk/debug/`.
 ## Privacy & Security
 
 - All credentials stored **locally only** using EncryptedSharedPreferences
-- No analytics, telemetry, or third-party SDKs
-- The app communicates **only** with `claude.ai` official API endpoints
+- No analytics or telemetry of its own. Ads are served by the Google AdMob SDK, which collects the Advertising ID as described in the privacy policy
+- The app communicates with `claude.ai`, with `chatgpt.com` (only if you connect a ChatGPT account), and with Google's ad servers
 - See [PRIVACY_POLICY.md](PRIVACY_POLICY.md) for full details
 
 ## Tech Stack

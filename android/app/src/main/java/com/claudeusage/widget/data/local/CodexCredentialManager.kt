@@ -57,6 +57,9 @@ class CodexCredentialManager(context: Context) {
 
     fun setAccountLabel(id: String, label: String) = store.setLabel(id, label)
 
+    fun updateCredentials(id: String, credentials: CodexCredentials) =
+        store.updateCredentials(id, credentials)
+
     fun removeAccount(id: String) = store.remove(id)
 
 

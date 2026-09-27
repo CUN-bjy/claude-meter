@@ -300,7 +300,17 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         _codexState.value = CodexUiState.Loading
-        val result = codexRepository.fetchUsageData(credentials)
+        var result = codexRepository.fetchUsageData(credentials)
+        if (result.exceptionOrNull() is AuthException) {
+            // The access token is short-lived, but the saved session cookies can
+            // mint a new one; only drop the account if that fails too
+            val session = codexRepository.fetchSession(credentials.sessionCookies).getOrNull()
+            if (session != null && codexCredentialManager.activeAccountId == accountId) {
+                val renewed = credentials.copy(accessToken = session.accessToken)
+                codexCredentialManager.updateCredentials(accountId, renewed)
+                result = codexRepository.fetchUsageData(renewed)
+            }
+        }
         // The user switched ChatGPT accounts while this request was in flight
         if (codexCredentialManager.activeAccountId != accountId) return
         result.fold(

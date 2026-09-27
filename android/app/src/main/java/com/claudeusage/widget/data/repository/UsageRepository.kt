@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -130,7 +131,10 @@ class UsageRepository {
             val body = response.body?.string() ?: ""
 
             when {
-                response.code == 401 || response.code == 403 -> {
+                isCloudflareChallenge(response, body) -> {
+                    throw CloudflareException(CLOUDFLARE_MESSAGE)
+                }
+                isAuthFailure(response.code, body) -> {
                     throw AuthException("[HTTP ${response.code}] Session expired.\nPlease log in again.")
                 }
                 response.code == 429 -> {
@@ -141,9 +145,6 @@ class UsageRepository {
                 }
                 !response.isSuccessful -> {
                     throw IOException("[HTTP ${response.code}] ${response.message.ifEmpty { "Request failed." }}")
-                }
-                body.contains("Just a moment") || body.contains("Enable JavaScript") -> {
-                    throw CloudflareException("[Cloudflare] Challenge detected.\nPlease try again.")
                 }
                 body.trimStart().startsWith("<") -> {
                     throw IOException("[HTTP ${response.code}] Unexpected HTML response from server.")
@@ -171,7 +172,10 @@ class UsageRepository {
                 val body = response.body?.string() ?: ""
 
                 when {
-                    response.code == 401 || response.code == 403 -> {
+                    isCloudflareChallenge(response, body) -> {
+                        Result.failure(CloudflareException(CLOUDFLARE_MESSAGE))
+                    }
+                    isAuthFailure(response.code, body) -> {
                         Result.failure(AuthException("[HTTP ${response.code}] Invalid session key."))
                     }
                     !response.isSuccessful -> {
@@ -238,6 +242,28 @@ class UsageRepository {
 private fun JSONObject.optIntOrNull(key: String): Int? {
     return if (has(key) && !isNull(key)) optInt(key) else null
 }
+
+/**
+ * Cloudflare's bot check answers with an HTML challenge page (usually a 403),
+ * which says nothing about the login. It must be recognised before the status
+ * code, or a valid saved account gets deleted as "expired".
+ */
+internal fun isCloudflareChallenge(response: Response, body: String): Boolean =
+    response.header("cf-mitigated") != null ||
+        body.contains("Just a moment") ||
+        body.contains("Enable JavaScript") ||
+        body.contains("challenge-platform")
+
+/**
+ * A 401 always means the login is gone. A 403 only does when the API itself
+ * answered: an HTML 403 is a block page from something in front of it.
+ */
+internal fun isAuthFailure(code: Int, body: String): Boolean =
+    code == 401 || (code == 403 && !body.trimStart().startsWith("<"))
+
+internal const val CLOUDFLARE_MESSAGE =
+    "[Cloudflare] The server is blocking automated requests right now.\n" +
+        "Your login is still saved. Wait a few minutes, then tap Retry."
 
 class AuthException(message: String) : Exception(message)
 class CloudflareException(message: String) : Exception(message)
