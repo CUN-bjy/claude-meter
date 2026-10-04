@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,6 +35,7 @@ import com.claudeusage.widget.ui.theme.*
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+private const val NICKNAME_MAX_LENGTH = 30
 private const val DONATE_URL = "https://paypal.me/JunyeobBaek"
 private val APP_VERSION = BuildConfig.VERSION_NAME
 
@@ -59,10 +61,12 @@ fun SettingsScreen(
     onSwitchClaudeAccount: (String) -> Unit = {},
     onAddClaudeAccount: () -> Unit = {},
     onRemoveClaudeAccount: (String) -> Unit = {},
+    onRenameClaudeAccount: (String, String) -> Unit = { _, _ -> },
     codexAccounts: AccountList = AccountList(),
     onSwitchCodexAccount: (String) -> Unit = {},
     onAddCodexAccount: () -> Unit = {},
     onRemoveCodexAccount: (String) -> Unit = {},
+    onRenameCodexAccount: (String, String) -> Unit = { _, _ -> },
     onBack: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
@@ -153,7 +157,8 @@ fun SettingsScreen(
                         addLabel = "Add Claude account",
                         onSwitch = onSwitchClaudeAccount,
                         onAdd = onAddClaudeAccount,
-                        onRemove = onRemoveClaudeAccount
+                        onRemove = onRemoveClaudeAccount,
+                        onRename = onRenameClaudeAccount
                     )
                     SettingsDivider()
                     AccountGroup(
@@ -163,7 +168,8 @@ fun SettingsScreen(
                         addLabel = "Add ChatGPT account",
                         onSwitch = onSwitchCodexAccount,
                         onAdd = onAddCodexAccount,
-                        onRemove = onRemoveCodexAccount
+                        onRemove = onRemoveCodexAccount,
+                        onRename = onRenameCodexAccount
                     )
                 }
             }
@@ -331,9 +337,58 @@ private fun AccountGroup(
     addLabel: String,
     onSwitch: (String) -> Unit,
     onAdd: () -> Unit,
-    onRemove: (String) -> Unit
+    onRemove: (String) -> Unit,
+    onRename: (String, String) -> Unit
 ) {
     var pendingRemoval by remember { mutableStateOf<AccountSummary?>(null) }
+    var renaming by remember { mutableStateOf<AccountSummary?>(null) }
+
+    renaming?.let { account ->
+        var name by remember(account.id) { mutableStateOf(account.nickname) }
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("Nickname", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    if (account.label.isNotBlank()) {
+                        Text(
+                            text = account.label,
+                            color = ExtendedTheme.colors.textMuted,
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it.take(NICKNAME_MAX_LENGTH) },
+                        placeholder = { Text("e.g. Work, Personal") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Kept on this device for this email, even if you log out. " +
+                            "Leave empty to remove.",
+                        color = ExtendedTheme.colors.textMuted,
+                        fontSize = 12.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    renaming = null
+                    onRename(account.id, name)
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renaming = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     pendingRemoval?.let { account ->
         val label = accounts.labelOf(account)
@@ -406,9 +461,22 @@ private fun AccountGroup(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = if (isActive) "In use" else "Tap to switch",
+                        text = listOfNotNull(
+                            accounts.detailOf(account),
+                            if (isActive) "In use" else "Tap to switch"
+                        ).joinToString(" · "),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         color = ExtendedTheme.colors.textMuted,
                         fontSize = 12.sp
+                    )
+                }
+                IconButton(onClick = { renaming = account }) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "Rename ${accounts.labelOf(account)}",
+                        tint = ExtendedTheme.colors.textMuted,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
                 IconButton(onClick = { pendingRemoval = account }) {

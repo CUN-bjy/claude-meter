@@ -57,6 +57,8 @@ class CredentialManager(context: Context) {
 
     fun setAccountLabel(id: String, label: String) = store.setLabel(id, label)
 
+    fun setAccountNickname(id: String, nickname: String) = store.setNickname(id, nickname)
+
     fun removeAccount(id: String) = store.remove(id)
 
 

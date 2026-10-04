@@ -53,7 +53,8 @@ sealed class CodexUiState {
 
 data class AccountSummary(
     val id: String,
-    val label: String
+    val label: String,
+    val nickname: String = ""
 )
 
 /** Saved logins for one service and which of them is currently shown. */
@@ -64,9 +65,13 @@ data class AccountList(
     val active: AccountSummary?
         get() = accounts.firstOrNull { it.id == activeId }
 
-    /** Label for the switcher: the saved email, or "Account N" when none is known. */
+    /** Name to show: the nickname, else the email, else "Account N". */
     fun labelOf(account: AccountSummary): String =
-        account.label.ifBlank { "Account ${accounts.indexOf(account) + 1}" }
+        account.nickname.ifBlank { account.label.ifBlank { "Account ${accounts.indexOf(account) + 1}" } }
+
+    /** The email under a nickname, so a named account stays identifiable; null otherwise. */
+    fun detailOf(account: AccountSummary): String? =
+        account.label.takeIf { account.nickname.isNotBlank() && it.isNotBlank() }
 }
 
 class UsageViewModel(application: Application) : AndroidViewModel(application) {
@@ -203,6 +208,16 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
         }
         credentialManager.removeAccount(id)
         historyStore.clearSeriesWhere(id) { it != UsageHistoryStore.SERIES_CODEX_WEEKLY }
+        refreshAccountLists()
+    }
+
+    fun renameClaudeAccount(id: String, nickname: String) {
+        credentialManager.setAccountNickname(id, nickname)
+        refreshAccountLists()
+    }
+
+    fun renameCodexAccount(id: String, nickname: String) {
+        codexCredentialManager.setAccountNickname(id, nickname)
         refreshAccountLists()
     }
 
@@ -647,7 +662,7 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun <T> Account<T>.toSummary() = AccountSummary(id, label)
+    private fun <T> Account<T>.toSummary() = AccountSummary(id, label, nickname)
 
     companion object {
         const val UPDATE_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes

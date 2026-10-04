@@ -57,6 +57,8 @@ class CodexCredentialManager(context: Context) {
 
     fun setAccountLabel(id: String, label: String) = store.setLabel(id, label)
 
+    fun setAccountNickname(id: String, nickname: String) = store.setNickname(id, nickname)
+
     fun updateCredentials(id: String, credentials: CodexCredentials) =
         store.updateCredentials(id, credentials)
 

@@ -19,13 +19,15 @@ internal class AccountStore<T>(
 
     fun getAccounts(): List<Account<T>> {
         val json = prefs.getString(KEY_ACCOUNTS, null) ?: return emptyList()
+        val names = nicknames
         return try {
             val array = JSONArray(json)
             (0 until array.length()).mapNotNull { i ->
                 val obj = array.optJSONObject(i) ?: return@mapNotNull null
                 val id = obj.optString(FIELD_ID).takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 val credentials = decode(obj) ?: return@mapNotNull null
-                Account(id, obj.optString(FIELD_LABEL), credentials)
+                val label = obj.optString(FIELD_LABEL)
+                Account(id, label, credentials, names[nicknameKey(id, label)].orEmpty())
             }
         } catch (e: Exception) {
             emptyList()
@@ -74,7 +76,43 @@ internal class AccountStore<T>(
     fun setLabel(id: String, label: String) {
         val accounts = getAccounts().map { if (it.id == id) it.copy(label = label) else it }
         save(accounts, prefs.getString(KEY_ACTIVE_ID, null))
+        // A nickname given before the email was known moves onto the email
+        val byId = nicknames[nicknameKey(id, "")]
+        if (byId != null && label.isNotBlank()) {
+            saveNicknames(nicknames - nicknameKey(id, "") + (nicknameKey(id, label) to byId))
+        }
     }
+
+    /**
+     * Names the account. Nicknames are kept by email, apart from the account
+     * list, so they survive a logout or expired session: logging in to the
+     * same email again brings the nickname back. A blank name forgets it.
+     */
+    fun setNickname(id: String, nickname: String) {
+        val account = getAccounts().firstOrNull { it.id == id } ?: return
+        val key = nicknameKey(account.id, account.label)
+        val trimmed = nickname.trim()
+        saveNicknames(if (trimmed.isEmpty()) nicknames - key else nicknames + (key to trimmed))
+    }
+
+    private val nicknames: Map<String, String>
+        get() {
+            val json = prefs.getString(KEY_NICKNAMES, null) ?: return emptyMap()
+            return try {
+                val obj = JSONObject(json)
+                obj.keys().asSequence().associateWith { obj.optString(it) }
+            } catch (e: Exception) {
+                emptyMap()
+            }
+        }
+
+    private fun saveNicknames(map: Map<String, String>) {
+        prefs.edit().putString(KEY_NICKNAMES, JSONObject(map).toString()).apply()
+    }
+
+    /** Emails compare case-insensitively; an account without one is keyed by its id. */
+    private fun nicknameKey(id: String, label: String): String =
+        label.trim().lowercase().ifEmpty { "id:$id" }
 
     fun setActive(id: String): Boolean {
         if (getAccounts().none { it.id == id }) return false
@@ -134,6 +172,7 @@ internal class AccountStore<T>(
         private val MIGRATION_LOCK = Any()
         private const val KEY_ACCOUNTS = "accounts"
         private const val KEY_ACTIVE_ID = "active_account_id"
+        private const val KEY_NICKNAMES = "nicknames"
         private const val FIELD_ID = "id"
         private const val FIELD_LABEL = "label"
     }

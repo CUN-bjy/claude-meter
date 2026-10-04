@@ -905,12 +905,23 @@ private fun AccountSwitcher(
                 val isActive = account.id == accounts.activeId
                 DropdownMenuItem(
                     text = {
-                        Text(
-                            text = accounts.labelOf(account),
-                            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Column {
+                            Text(
+                                text = accounts.labelOf(account),
+                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            accounts.detailOf(account)?.let {
+                                Text(
+                                    text = it,
+                                    color = ExtendedTheme.colors.textMuted,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     },
                     leadingIcon = {
                         if (isActive) {

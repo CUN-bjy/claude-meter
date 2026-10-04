@@ -247,8 +247,10 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             },
+                            onRenameClaudeAccount = viewModel::renameClaudeAccount,
                             codexAccounts = codexAccounts,
                             onSwitchCodexAccount = viewModel::switchCodexAccount,
+                            onRenameCodexAccount = viewModel::renameCodexAccount,
                             onAddCodexAccount = { launchCodexLogin() },
                             onRemoveCodexAccount = { id ->
                                 interstitialAdManager.showThen(this@MainActivity) {
