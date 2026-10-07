@@ -5,12 +5,16 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -28,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,11 +40,20 @@ import com.claudeusage.widget.data.local.AppPreferences
 import com.claudeusage.widget.data.model.CodexUsageData
 import com.claudeusage.widget.data.model.ExtraUsageInfo
 import com.claudeusage.widget.data.model.UsageData
+import com.claudeusage.widget.data.model.CoachNotification
+import com.claudeusage.widget.data.model.CoachSeverity
 import com.claudeusage.widget.ui.components.BannerAd
+import com.claudeusage.widget.ui.components.CoachBanner
 import com.claudeusage.widget.ui.components.UsageProgressBar
 import com.claudeusage.widget.ui.theme.*
 import java.time.Duration
 import java.time.Instant
+
+private val ACCOUNT_HINT = CoachNotification(
+    message = "New: tap your email at the top to switch accounts or add another " +
+        "Claude or ChatGPT account.",
+    severity = CoachSeverity.INFO
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,16 +70,30 @@ fun UsageScreen(
     onSettingsClick: () -> Unit,
     onForecastClick: () -> Unit = {},
     onCodexLoginClick: () -> Unit = {},
-    onCodexLogout: () -> Unit = {}
+    onCodexLogout: () -> Unit = {},
+    claudeAccounts: AccountList = AccountList(),
+    onSwitchAccount: (String) -> Unit = {},
+    codexAccounts: AccountList = AccountList(),
+    onSwitchCodexAccount: (String) -> Unit = {},
+    showAccountHint: Boolean = false,
+    onDismissAccountHint: () -> Unit = {}
 ) {
     var showLogoutDialog by remember { mutableStateOf(false) }
+    val claudeMenuOpen = remember { mutableStateOf(false) }
 
     if (showLogoutDialog) {
+        val activeLabel = claudeAccounts.active?.let { claudeAccounts.labelOf(it) }
         AlertDialog(
             onDismissRequest = { showLogoutDialog = false },
             title = { Text("Logout", fontWeight = FontWeight.Bold) },
             text = {
-                Text("Are you sure you want to logout?")
+                Text(
+                    if (activeLabel != null && claudeAccounts.accounts.size > 1) {
+                        "Log out of $activeLabel? You'll switch to your next saved account."
+                    } else {
+                        "Are you sure you want to logout?"
+                    }
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -87,11 +115,40 @@ fun UsageScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Claude Meter",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
-                    )
+                    if (claudeAccounts.accounts.isEmpty()) {
+                        Text(
+                            text = "Claude Meter",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp
+                        )
+                    } else {
+                        Column {
+                            Text(
+                                text = "Claude Meter",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp
+                            )
+                            // Email + arrow, like the ChatGPT card, so it reads as an account menu
+                            AccountSwitcher(
+                                accounts = claudeAccounts,
+                                accentColor = ClaudePurpleLight,
+                                addLabel = "Add Claude account",
+                                onSwitch = onSwitchAccount,
+                                onAdd = onLoginClick,
+                                expandedState = claudeMenuOpen,
+                                onOpen = onDismissAccountHint
+                            ) {
+                                Text(
+                                    text = claudeAccounts.active?.let { claudeAccounts.labelOf(it) }
+                                        ?: "Choose account",
+                                    color = ExtendedTheme.colors.textMuted,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
                 },
                 actions = {
                     if (uiState is UiState.Success) {
@@ -102,13 +159,17 @@ fun UsageScreen(
                                 tint = ExtendedTheme.colors.textSecondary
                             )
                         }
-                        IconButton(onClick = onSettingsClick) {
-                            Icon(
-                                Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                tint = ExtendedTheme.colors.textSecondary
-                            )
-                        }
+                    }
+                    // Always reachable: on an error or after a session expires, Settings
+                    // is where the user switches or removes accounts
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = ExtendedTheme.colors.textSecondary
+                        )
+                    }
+                    if (uiState is UiState.Success) {
                         IconButton(onClick = onRefresh, enabled = !isRefreshing) {
                             if (isRefreshing) {
                                 CircularProgressIndicator(
@@ -158,7 +219,15 @@ fun UsageScreen(
                     hiddenMetrics = hiddenMetrics,
                     codexState = codexState,
                     onCodexLoginClick = onCodexLoginClick,
-                    onCodexLogout = onCodexLogout
+                    onCodexLogout = onCodexLogout,
+                    codexAccounts = codexAccounts,
+                    onSwitchCodexAccount = onSwitchCodexAccount,
+                    showAccountHint = showAccountHint && claudeAccounts.accounts.isNotEmpty(),
+                    onAccountHintClick = {
+                        onDismissAccountHint()
+                        claudeMenuOpen.value = true
+                    },
+                    onDismissAccountHint = onDismissAccountHint
                 )
                 is UiState.Error -> ErrorContent(
                     message = uiState.message,
@@ -371,7 +440,12 @@ private fun UsageContent(
     hiddenMetrics: Set<String>,
     codexState: CodexUiState = CodexUiState.NotConnected,
     onCodexLoginClick: () -> Unit = {},
-    onCodexLogout: () -> Unit = {}
+    onCodexLogout: () -> Unit = {},
+    codexAccounts: AccountList = AccountList(),
+    onSwitchCodexAccount: (String) -> Unit = {},
+    showAccountHint: Boolean = false,
+    onAccountHintClick: () -> Unit = {},
+    onDismissAccountHint: () -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
 
@@ -381,6 +455,14 @@ private fun UsageContent(
             .verticalScroll(scrollState)
             .padding(horizontal = 20.dp, vertical = 8.dp)
     ) {
+        // One-time pointer to the account menu for people updating from a single-account version
+        CoachBanner(
+            notification = if (showAccountHint) ACCOUNT_HINT else null,
+            onClick = onAccountHintClick,
+            onDismiss = onDismissAccountHint,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+
         // Main usage cards - always show even when null (after reset)
         val defaultMetric = com.claudeusage.widget.data.model.UsageMetric(0.0, null)
 
@@ -423,7 +505,9 @@ private fun UsageContent(
             CodexSection(
                 codexState = codexState,
                 onCodexLoginClick = onCodexLoginClick,
-                onCodexLogout = onCodexLogout
+                onCodexLogout = onCodexLogout,
+                codexAccounts = codexAccounts,
+                onSwitchCodexAccount = onSwitchCodexAccount
             )
         }
 
@@ -622,7 +706,9 @@ private fun ExtraUsageBar(
 private fun CodexSection(
     codexState: CodexUiState,
     onCodexLoginClick: () -> Unit,
-    onCodexLogout: () -> Unit
+    onCodexLogout: () -> Unit,
+    codexAccounts: AccountList = AccountList(),
+    onSwitchCodexAccount: (String) -> Unit = {}
 ) {
     var showDisconnectDialog by remember { mutableStateOf(false) }
 
@@ -631,7 +717,14 @@ private fun CodexSection(
             onDismissRequest = { showDisconnectDialog = false },
             title = { Text("Disconnect Codex", fontWeight = FontWeight.Bold) },
             text = {
-                Text("Are you sure you want to disconnect your ChatGPT account?")
+                val activeLabel = codexAccounts.active?.let { codexAccounts.labelOf(it) }
+                Text(
+                    if (activeLabel != null && codexAccounts.accounts.size > 1) {
+                        "Disconnect $activeLabel? You'll switch to your next saved ChatGPT account."
+                    } else {
+                        "Are you sure you want to disconnect your ChatGPT account?"
+                    }
+                )
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -660,7 +753,7 @@ private fun CodexSection(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f, fill = false)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "Codex Usage",
@@ -675,11 +768,30 @@ private fun CodexSection(
                             fontSize = 11.sp
                         )
                     }
-                    Text(
-                        text = "ChatGPT / Codex",
-                        color = ExtendedTheme.colors.textMuted,
-                        fontSize = 11.sp
-                    )
+                    val activeCodex = codexAccounts.active
+                    if (activeCodex == null) {
+                        Text(
+                            text = "ChatGPT / Codex",
+                            color = ExtendedTheme.colors.textMuted,
+                            fontSize = 11.sp
+                        )
+                    } else {
+                        AccountSwitcher(
+                            accounts = codexAccounts,
+                            accentColor = CodexGreen,
+                            addLabel = "Add ChatGPT account",
+                            onSwitch = onSwitchCodexAccount,
+                            onAdd = onCodexLoginClick
+                        ) {
+                            Text(
+                                text = codexAccounts.labelOf(activeCodex),
+                                color = ExtendedTheme.colors.textMuted,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
                 if (codexState is CodexUiState.Connected) {
                     TextButton(onClick = { showDisconnectDialog = true }) {
@@ -747,6 +859,94 @@ private fun CodexSection(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Shows [content] with a dropdown arrow; tapping it lists the saved
+ * accounts (active one checked) plus an entry to log in to another one.
+ */
+@Composable
+private fun AccountSwitcher(
+    accounts: AccountList,
+    accentColor: Color,
+    addLabel: String,
+    onSwitch: (String) -> Unit,
+    onAdd: () -> Unit,
+    expandedState: MutableState<Boolean> = remember { mutableStateOf(false) },
+    onOpen: () -> Unit = {},
+    content: @Composable () -> Unit
+) {
+    var expanded by expandedState
+
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable {
+                    expanded = true
+                    onOpen()
+                },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(modifier = Modifier.weight(1f, fill = false)) { content() }
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = "Switch account",
+                tint = ExtendedTheme.colors.textMuted
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            accounts.accounts.forEach { account ->
+                val isActive = account.id == accounts.activeId
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = accounts.labelOf(account),
+                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            accounts.detailOf(account)?.let {
+                                Text(
+                                    text = it,
+                                    color = ExtendedTheme.colors.textMuted,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    },
+                    leadingIcon = {
+                        if (isActive) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = accentColor)
+                        } else {
+                            Spacer(modifier = Modifier.size(24.dp))
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSwitch(account.id)
+                    }
+                )
+            }
+            Divider(color = ExtendedTheme.colors.dividerColor)
+            DropdownMenuItem(
+                text = { Text(addLabel) },
+                leadingIcon = {
+                    Icon(Icons.Default.Add, contentDescription = null, tint = accentColor)
+                },
+                onClick = {
+                    expanded = false
+                    onAdd()
+                }
+            )
         }
     }
 }

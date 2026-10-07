@@ -59,7 +59,10 @@ class CodexUsageRepository {
             val body = response.body?.string() ?: ""
 
             when {
-                response.code == 401 || response.code == 403 -> {
+                isCloudflareChallenge(response, body) -> {
+                    throw CloudflareException(CLOUDFLARE_MESSAGE)
+                }
+                isAuthFailure(response.code, body) -> {
                     throw AuthException("[HTTP ${response.code}] Session expired.\nPlease log in again.")
                 }
                 response.code == 429 -> {
@@ -70,9 +73,6 @@ class CodexUsageRepository {
                 }
                 !response.isSuccessful -> {
                     throw IOException("[HTTP ${response.code}] ${response.message.ifEmpty { "Request failed." }}")
-                }
-                body.contains("Just a moment") || body.contains("Enable JavaScript") -> {
-                    throw CloudflareException("[Cloudflare] Challenge detected.\nPlease try again.")
                 }
                 body.trimStart().startsWith("<") -> {
                     throw IOException("[HTTP ${response.code}] Unexpected HTML response from server.")
@@ -85,7 +85,8 @@ class CodexUsageRepository {
         throw lastException ?: IOException("Request failed after retries.")
     }
 
-    suspend fun fetchAccessToken(cookies: String): Result<String> =
+    /** Exchanges ChatGPT session cookies for an access token and the login email. */
+    suspend fun fetchSession(cookies: String): Result<CodexSession> =
         withContext(Dispatchers.IO) {
             try {
                 val request = Request.Builder()
@@ -100,7 +101,10 @@ class CodexUsageRepository {
                 val body = response.body?.string() ?: ""
 
                 when {
-                    response.code == 401 || response.code == 403 -> {
+                    isCloudflareChallenge(response, body) -> {
+                        Result.failure(CloudflareException(CLOUDFLARE_MESSAGE))
+                    }
+                    isAuthFailure(response.code, body) -> {
                         Result.failure(AuthException("[HTTP ${response.code}] Invalid session."))
                     }
                     !response.isSuccessful -> {
@@ -109,8 +113,9 @@ class CodexUsageRepository {
                     else -> {
                         val json = JSONObject(body)
                         val accessToken = json.optString("accessToken", "")
+                        val email = json.optJSONObject("user")?.optString("email").orEmpty()
                         if (accessToken.isNotBlank()) {
-                            Result.success(accessToken)
+                            Result.success(CodexSession(accessToken, email))
                         } else {
                             Result.failure(IOException("No access token in session response."))
                         }
@@ -133,3 +138,8 @@ class CodexUsageRepository {
         private const val INITIAL_BACKOFF_MS = 2000L
     }
 }
+
+data class CodexSession(
+    val accessToken: String,
+    val email: String
+)

@@ -3,6 +3,7 @@ package com.claudeusage.widget.data.local
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.claudeusage.widget.data.model.Account
 import com.claudeusage.widget.data.model.CodexCredentials
 
 class CodexCredentialManager(context: Context) {
@@ -19,22 +20,50 @@ class CodexCredentialManager(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
-    fun getCredentials(): CodexCredentials? {
-        val token = prefs.getString(KEY_ACCESS_TOKEN, null) ?: return null
-        val cookies = prefs.getString(KEY_SESSION_COOKIES, null) ?: return null
-        return CodexCredentials(token, cookies)
+    private val store = AccountStore(
+        prefs,
+        encode = { credentials: CodexCredentials, obj ->
+            obj.put(KEY_ACCESS_TOKEN, credentials.accessToken)
+            obj.put(KEY_SESSION_COOKIES, credentials.sessionCookies)
+        },
+        decode = { obj ->
+            CodexCredentials(obj.optString(KEY_ACCESS_TOKEN), obj.optString(KEY_SESSION_COOKIES))
+                .takeIf { it.isValid }
+        }
+    ).also { store ->
+        store.migrateLegacy(
+            legacy = {
+                val token = prefs.getString(KEY_ACCESS_TOKEN, null)
+                val cookies = prefs.getString(KEY_SESSION_COOKIES, null)
+                if (token != null && cookies != null) CodexCredentials(token, cookies) else null
+            },
+            clearLegacy = { remove(KEY_ACCESS_TOKEN).remove(KEY_SESSION_COOKIES) }
+        )
     }
 
-    fun saveCredentials(credentials: CodexCredentials) {
-        prefs.edit()
-            .putString(KEY_ACCESS_TOKEN, credentials.accessToken)
-            .putString(KEY_SESSION_COOKIES, credentials.sessionCookies)
-            .apply()
-    }
+    /** Credentials of the active account. */
+    fun getCredentials(): CodexCredentials? = store.getActiveAccount()?.credentials
 
-    fun clearCredentials() {
-        prefs.edit().clear().apply()
-    }
+    fun getAccounts(): List<Account<CodexCredentials>> = store.getAccounts()
+
+    val activeAccountId: String?
+        get() = store.activeAccountId
+
+    /** Saves a login and switches to it. */
+    fun saveCredentials(credentials: CodexCredentials, label: String = ""): Account<CodexCredentials> =
+        store.upsert(label, credentials) { it.accessToken == credentials.accessToken }
+
+    fun switchAccount(id: String): Boolean = store.setActive(id)
+
+    fun setAccountLabel(id: String, label: String) = store.setLabel(id, label)
+
+    fun setAccountNickname(id: String, nickname: String) = store.setNickname(id, nickname)
+
+    fun updateCredentials(id: String, credentials: CodexCredentials) =
+        store.updateCredentials(id, credentials)
+
+    fun removeAccount(id: String) = store.remove(id)
+
 
     fun hasCredentials(): Boolean {
         return getCredentials()?.isValid == true

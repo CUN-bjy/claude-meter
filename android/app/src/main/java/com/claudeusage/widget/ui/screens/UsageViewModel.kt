@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.claudeusage.widget.MainActivity
 import com.claudeusage.widget.R
 import com.claudeusage.widget.data.local.AppPreferences
+import com.claudeusage.widget.data.model.Account
 import com.claudeusage.widget.data.local.CodexCredentialManager
 import com.claudeusage.widget.data.local.CredentialManager
 import com.claudeusage.widget.data.local.UsageHistoryEntry
@@ -24,6 +25,7 @@ import com.claudeusage.widget.data.repository.CodexUsageRepository
 import com.claudeusage.widget.data.repository.RateLimitException
 import com.claudeusage.widget.data.repository.UsageRepository
 import com.claudeusage.widget.service.UsageNotificationService
+import com.claudeusage.widget.widget.UsageWidgetReceiver
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +49,29 @@ sealed class CodexUiState {
     data object Loading : CodexUiState()
     data class Connected(val data: CodexUsageData) : CodexUiState()
     data class Error(val message: String, val isAuthError: Boolean = false) : CodexUiState()
+}
+
+data class AccountSummary(
+    val id: String,
+    val label: String,
+    val nickname: String = ""
+)
+
+/** Saved logins for one service and which of them is currently shown. */
+data class AccountList(
+    val accounts: List<AccountSummary> = emptyList(),
+    val activeId: String? = null
+) {
+    val active: AccountSummary?
+        get() = accounts.firstOrNull { it.id == activeId }
+
+    /** Name to show: the nickname, else the email, else "Account N". */
+    fun labelOf(account: AccountSummary): String =
+        account.nickname.ifBlank { account.label.ifBlank { "Account ${accounts.indexOf(account) + 1}" } }
+
+    /** The email under a nickname, so a named account stays identifiable; null otherwise. */
+    fun detailOf(account: AccountSummary): String? =
+        account.label.takeIf { account.nickname.isNotBlank() && it.isNotBlank() }
 }
 
 class UsageViewModel(application: Application) : AndroidViewModel(application) {
@@ -73,6 +98,12 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
     private val _codexState = MutableStateFlow<CodexUiState>(CodexUiState.NotConnected)
     val codexState: StateFlow<CodexUiState> = _codexState.asStateFlow()
 
+    private val _claudeAccounts = MutableStateFlow(AccountList())
+    val claudeAccounts: StateFlow<AccountList> = _claudeAccounts.asStateFlow()
+
+    private val _codexAccounts = MutableStateFlow(AccountList())
+    val codexAccounts: StateFlow<AccountList> = _codexAccounts.asStateFlow()
+
     private var autoRefreshJob: Job? = null
     private val fetchMutex = Mutex()
     private var isAppInForeground = false
@@ -83,7 +114,8 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         createCoachNotificationChannel()
-        _usageHistory.value = historyStore.getAllHistory()
+        refreshAccountLists()
+        reloadHistory()
         checkCredentialsAndLoad()
         checkCodexCredentials()
     }
@@ -106,7 +138,9 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
             orgResult.fold(
                 onSuccess = { orgId ->
                     val credentials = Credentials(sessionKey, orgId)
-                    credentialManager.saveCredentials(credentials)
+                    val label = repository.fetchAccountLabel(sessionKey).orEmpty()
+                    credentialManager.saveCredentials(credentials, label)
+                    onClaudeAccountChanged()
                     fetchUsageData()
                 },
                 onFailure = { error ->
@@ -149,12 +183,96 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Logs out of the active Claude account; the next saved one, if any, takes over. */
     fun logout() {
         autoRefreshJob?.cancel()
-        credentialManager.clearCredentials()
-        _uiState.value = UiState.LoginRequired
+        credentialManager.activeAccountId?.let { id ->
+            credentialManager.removeAccount(id)
+            historyStore.clearSeriesWhere(id) { it != UsageHistoryStore.SERIES_CODEX_WEEKLY }
+        }
+        onClaudeAccountChanged()
         _lastUpdated.value = null
-        UsageNotificationService.stop(getApplication())
+        if (credentialManager.hasCredentials()) {
+            checkCredentialsAndLoad()
+        } else {
+            _uiState.value = UiState.LoginRequired
+            UsageNotificationService.stop(getApplication())
+        }
+    }
+
+    /** Removes a saved Claude account; removing the active one is the same as [logout]. */
+    fun removeClaudeAccount(id: String) {
+        if (id == credentialManager.activeAccountId) {
+            logout()
+            return
+        }
+        credentialManager.removeAccount(id)
+        historyStore.clearSeriesWhere(id) { it != UsageHistoryStore.SERIES_CODEX_WEEKLY }
+        refreshAccountLists()
+    }
+
+    fun renameClaudeAccount(id: String, nickname: String) {
+        credentialManager.setAccountNickname(id, nickname)
+        refreshAccountLists()
+    }
+
+    fun renameCodexAccount(id: String, nickname: String) {
+        codexCredentialManager.setAccountNickname(id, nickname)
+        refreshAccountLists()
+    }
+
+    fun switchClaudeAccount(id: String) {
+        if (id == credentialManager.activeAccountId) return
+        if (!credentialManager.switchAccount(id)) return
+        autoRefreshJob?.cancel()
+        onClaudeAccountChanged()
+        _lastUpdated.value = null
+        checkCredentialsAndLoad()
+    }
+
+    /**
+     * Resets per-account state after the active Claude account changed, so
+     * reset detection and graphs never compare two different accounts.
+     */
+    private fun onClaudeAccountChanged() {
+        prevSessionUtil = null
+        prevWeeklyUtil = null
+        prevDynamicUtils = emptyMap()
+        lastCoachEvalTime = 0L
+        refreshAccountLists()
+        reloadHistory()
+        // The widget shows the active account, so redraw it for the new one
+        try {
+            UsageWidgetReceiver.updateWidget(getApplication())
+        } catch (_: Exception) {
+            // Widget might not be placed
+        }
+    }
+
+    private fun refreshAccountLists() {
+        _claudeAccounts.value = AccountList(
+            credentialManager.getAccounts().map { it.toSummary() },
+            credentialManager.activeAccountId
+        )
+        _codexAccounts.value = AccountList(
+            codexCredentialManager.getAccounts().map { it.toSummary() },
+            codexCredentialManager.activeAccountId
+        )
+    }
+
+    private fun reloadHistory() {
+        _usageHistory.value = historyStore.getHistory(
+            credentialManager.activeAccountId,
+            codexCredentialManager.activeAccountId
+        )
+    }
+
+    /** Fills in a missing switcher label, e.g. for a login carried over from before accounts existed. */
+    private suspend fun ensureClaudeLabel(id: String, credentials: Credentials) {
+        if (credentialManager.getAccounts().firstOrNull { it.id == id }?.label?.isNotBlank() != false) return
+        val label = repository.fetchAccountLabel(credentials.sessionKey) ?: return
+        credentialManager.setAccountLabel(id, label)
+        refreshAccountLists()
     }
 
     // --- Codex ---
@@ -170,11 +288,12 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
     fun onCodexLoginComplete(cookies: String) {
         viewModelScope.launch {
             _codexState.value = CodexUiState.Loading
-            val tokenResult = codexRepository.fetchAccessToken(cookies)
+            val tokenResult = codexRepository.fetchSession(cookies)
             tokenResult.fold(
-                onSuccess = { accessToken ->
-                    val credentials = CodexCredentials(accessToken, cookies)
-                    codexCredentialManager.saveCredentials(credentials)
+                onSuccess = { session ->
+                    val credentials = CodexCredentials(session.accessToken, cookies)
+                    codexCredentialManager.saveCredentials(credentials, session.email)
+                    onCodexAccountChanged()
                     fetchCodexUsageData()
                 },
                 onFailure = { error ->
@@ -188,18 +307,32 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun fetchCodexUsageData() {
+        val accountId = codexCredentialManager.activeAccountId
         val credentials = codexCredentialManager.getCredentials()
-        if (credentials == null) {
+        if (accountId == null || credentials == null) {
             _codexState.value = CodexUiState.NotConnected
             return
         }
 
         _codexState.value = CodexUiState.Loading
-        val result = codexRepository.fetchUsageData(credentials)
+        var result = codexRepository.fetchUsageData(credentials)
+        if (result.exceptionOrNull() is AuthException) {
+            // The access token is short-lived, but the saved session cookies can
+            // mint a new one; only drop the account if that fails too
+            val session = codexRepository.fetchSession(credentials.sessionCookies).getOrNull()
+            if (session != null && codexCredentialManager.activeAccountId == accountId) {
+                val renewed = credentials.copy(accessToken = session.accessToken)
+                codexCredentialManager.updateCredentials(accountId, renewed)
+                result = codexRepository.fetchUsageData(renewed)
+            }
+        }
+        // The user switched ChatGPT accounts while this request was in flight
+        if (codexCredentialManager.activeAccountId != accountId) return
         result.fold(
             onSuccess = { data ->
                 _codexState.value = CodexUiState.Connected(data)
-                recordCodexHistory(data)
+                recordCodexHistory(accountId, data)
+                ensureCodexLabel(accountId, credentials)
                 // Also merge into main UiState if Claude is already loaded
                 val current = _uiState.value
                 if (current is UiState.Success) {
@@ -209,7 +342,8 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
             onFailure = { error ->
                 val isAuth = error is AuthException
                 if (isAuth) {
-                    codexCredentialManager.clearCredentials()
+                    codexCredentialManager.removeAccount(accountId)
+                    onCodexAccountChanged()
                 }
                 _codexState.value = CodexUiState.Error(
                     message = error.message ?: "Failed to fetch Codex usage.",
@@ -219,14 +353,59 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    /** Disconnects the active ChatGPT account; the next saved one, if any, takes over. */
     fun logoutCodex() {
-        codexCredentialManager.clearCredentials()
-        _codexState.value = CodexUiState.NotConnected
-        // Remove codex data from main state
+        codexCredentialManager.activeAccountId?.let { id ->
+            codexCredentialManager.removeAccount(id)
+            historyStore.clearSeriesWhere(id) { it == UsageHistoryStore.SERIES_CODEX_WEEKLY }
+        }
+        onCodexAccountChanged()
+        clearCodexData()
+        if (codexCredentialManager.hasCredentials()) {
+            refreshCodex()
+        } else {
+            _codexState.value = CodexUiState.NotConnected
+        }
+    }
+
+    /** Removes a saved ChatGPT account; removing the active one is the same as [logoutCodex]. */
+    fun removeCodexAccount(id: String) {
+        if (id == codexCredentialManager.activeAccountId) {
+            logoutCodex()
+            return
+        }
+        codexCredentialManager.removeAccount(id)
+        historyStore.clearSeriesWhere(id) { it == UsageHistoryStore.SERIES_CODEX_WEEKLY }
+        refreshAccountLists()
+    }
+
+    fun switchCodexAccount(id: String) {
+        if (id == codexCredentialManager.activeAccountId) return
+        if (!codexCredentialManager.switchAccount(id)) return
+        onCodexAccountChanged()
+        clearCodexData()
+        refreshCodex()
+    }
+
+    private fun onCodexAccountChanged() {
+        refreshAccountLists()
+        reloadHistory()
+    }
+
+    /** Removes the previous account's Codex data from the main state. */
+    private fun clearCodexData() {
         val current = _uiState.value
         if (current is UiState.Success) {
             _uiState.value = current.copy(codexData = null)
         }
+    }
+
+    private suspend fun ensureCodexLabel(id: String, credentials: CodexCredentials) {
+        if (codexCredentialManager.getAccounts().firstOrNull { it.id == id }?.label?.isNotBlank() != false) return
+        val email = codexRepository.fetchSession(credentials.sessionCookies).getOrNull()?.email
+        if (email.isNullOrBlank()) return
+        codexCredentialManager.setAccountLabel(id, email)
+        refreshAccountLists()
     }
 
     fun refreshCodex() {
@@ -236,16 +415,20 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun fetchUsageData() = fetchMutex.withLock {
+        val accountId = credentialManager.activeAccountId
         val credentials = credentialManager.getCredentials()
-        if (credentials == null) {
+        if (accountId == null || credentials == null) {
             _uiState.value = UiState.LoginRequired
             return@withLock
         }
 
         val result = repository.fetchUsageData(credentials)
+        // The user switched Claude accounts while this request was in flight
+        if (credentialManager.activeAccountId != accountId) return@withLock
         result.fold(
             onSuccess = { data ->
-                _uiState.value = UiState.Success(data)
+                val codexData = (_codexState.value as? CodexUiState.Connected)?.data
+                _uiState.value = UiState.Success(data, codexData)
                 _lastUpdated.value = formatLastUpdated()
                 startAutoRefresh()
                 if (appPreferences.notificationEnabled) {
@@ -253,14 +436,15 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 // Coach features (push notifications)
                 if (appPreferences.coachEnabled) {
-                    detectResets(data)
+                    detectResets(accountId, data)
                     val now = System.currentTimeMillis()
                     if (now - lastCoachEvalTime >= COACH_EVAL_INTERVAL_MS) {
                         evaluateCoachNotification(data)
                         lastCoachEvalTime = now
                     }
                 }
-                recordUsageHistory(data)
+                recordUsageHistory(accountId, data)
+                ensureClaudeLabel(accountId, credentials)
                 // Update previous values for next comparison
                 prevSessionUtil = data.fiveHour?.utilization
                 prevWeeklyUtil = data.sevenDay?.utilization
@@ -270,11 +454,12 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
                 val isAuth = error is AuthException
                 val isRateLimit = error is RateLimitException
                 if (isAuth) {
-                    credentialManager.clearCredentials()
+                    credentialManager.removeAccount(accountId)
+                    onClaudeAccountChanged()
                 }
                 // Only show error if we don't already have data
                 val currentState = _uiState.value
-                if (currentState is UiState.Success) {
+                if (currentState is UiState.Success && !isAuth) {
                     // Keep existing data, just update timestamp note
                     val reason = if (isRateLimit) "Rate limited" else "Update failed"
                     _lastUpdated.value = "$reason - ${formatLastUpdated()}"
@@ -366,7 +551,7 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
         sendCoachPushNotification(title, message, COACH_ANALYSIS_ID)
     }
 
-    private fun detectResets(data: UsageData) {
+    private fun detectResets(accountId: String, data: UsageData) {
         // Session reset: previous utilization was significant, now dropped to near zero
         val currentSessionUtil = data.fiveHour?.utilization ?: 0.0
         val prevSession = prevSessionUtil
@@ -388,8 +573,8 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
                 COACH_WEEKLY_RESET_ID
             )
             // Only Claude series reset here; Codex has its own weekly window
-            historyStore.clearSeriesWhere { it != UsageHistoryStore.SERIES_CODEX_WEEKLY }
-            _usageHistory.value = historyStore.getAllHistory()
+            historyStore.clearSeriesWhere(accountId) { it != UsageHistoryStore.SERIES_CODEX_WEEKLY }
+            reloadHistory()
         }
 
         // Per-model resets (seven_day_sonnet, seven_day_fable, ...)
@@ -408,7 +593,7 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun recordUsageHistory(data: UsageData) {
+    private fun recordUsageHistory(accountId: String, data: UsageData) {
         val values = buildMap {
             data.sevenDay?.let { put(UsageHistoryStore.SERIES_WEEKLY_ALL, it.utilization) }
             // Per-model weekly limits (seven_day_fable, limits_fable, ...)
@@ -417,18 +602,19 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
                 .forEach { put(it.key, it.metric.utilization) }
         }
         if (values.isEmpty()) return
-        historyStore.addEntries(System.currentTimeMillis(), values)
-        _usageHistory.value = historyStore.getAllHistory()
+        historyStore.addEntries(accountId, System.currentTimeMillis(), values)
+        reloadHistory()
     }
 
-    private fun recordCodexHistory(data: CodexUsageData) {
+    private fun recordCodexHistory(accountId: String, data: CodexUsageData) {
         val weekly = listOfNotNull(data.primaryWindow, data.secondaryWindow)
             .firstOrNull { it.windowLabel == "weekly" } ?: return
         historyStore.addEntries(
+            accountId,
             System.currentTimeMillis(),
             mapOf(UsageHistoryStore.SERIES_CODEX_WEEKLY to weekly.usedPercent)
         )
-        _usageHistory.value = historyStore.getAllHistory()
+        reloadHistory()
     }
 
     private fun createCoachNotificationChannel() {
@@ -475,6 +661,8 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
             else -> "${m}m"
         }
     }
+
+    private fun <T> Account<T>.toSummary() = AccountSummary(id, label, nickname)
 
     companion object {
         const val UPDATE_INTERVAL_MS = 5 * 60 * 1000L // 5 minutes

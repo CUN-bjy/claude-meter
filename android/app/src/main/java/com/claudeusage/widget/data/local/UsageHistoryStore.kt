@@ -14,6 +14,9 @@ data class UsageHistoryEntry(
  * Stores utilization history as multiple named series, e.g.
  * "seven_day" (overall Claude weekly), "seven_day_fable",
  * "codex_weekly", so each 7d limit can be graphed independently.
+ *
+ * Each series belongs to one saved account: it is stored under
+ * "<accountId>|<series>" so switching accounts never mixes their graphs.
  */
 class UsageHistoryStore(context: Context) {
 
@@ -21,27 +24,30 @@ class UsageHistoryStore(context: Context) {
         PREFS_NAME, Context.MODE_PRIVATE
     )
 
-    fun getAllHistory(): Map<String, List<UsageHistoryEntry>> {
-        migrateLegacyHistory()
-        val json = prefs.getString(KEY_HISTORY_V2, null) ?: return emptyMap()
-        return try {
-            val root = JSONObject(json)
-            root.keys().asSequence().associateWith { key ->
-                parseEntries(root.optJSONArray(key))
-            }.filterValues { it.isNotEmpty() }
-        } catch (e: Exception) {
-            emptyMap()
+    /**
+     * History of the given Claude and Codex accounts, keyed by plain series
+     * name ("seven_day", "codex_weekly", ...). Codex series come from
+     * [codexAccountId], every other series from [claudeAccountId].
+     */
+    fun getHistory(
+        claudeAccountId: String?,
+        codexAccountId: String?
+    ): Map<String, List<UsageHistoryEntry>> {
+        val result = mutableMapOf<String, List<UsageHistoryEntry>>()
+        for ((key, entries) in getAllSeries()) {
+            val (accountId, series) = splitKey(key) ?: continue
+            val owner = if (series == SERIES_CODEX_WEEKLY) codexAccountId else claudeAccountId
+            if (owner != null && accountId == owner) result[series] = entries
         }
+        return result
     }
 
-    fun getHistory(seriesKey: String = SERIES_WEEKLY_ALL): List<UsageHistoryEntry> =
-        getAllHistory()[seriesKey] ?: emptyList()
-
-    /** Appends one data point to each given series at the same timestamp. */
-    fun addEntries(timestamp: Long, values: Map<String, Double>) {
+    /** Appends one data point to each of [accountId]'s given series at the same timestamp. */
+    fun addEntries(accountId: String, timestamp: Long, values: Map<String, Double>) {
         if (values.isEmpty()) return
-        val all = getAllHistory().toMutableMap()
-        for ((key, utilization) in values) {
+        val all = getAllSeries().toMutableMap()
+        for ((series, utilization) in values) {
+            val key = scopedKey(accountId, series)
             all[key] = (all[key].orEmpty() + UsageHistoryEntry(timestamp, utilization))
                 .takeLast(MAX_ENTRIES_PER_SERIES)
         }
@@ -53,35 +59,63 @@ class UsageHistoryStore(context: Context) {
         saveHistory(pruned)
     }
 
-    fun addEntry(timestamp: Long, utilization: Double) {
-        addEntries(timestamp, mapOf(SERIES_WEEKLY_ALL to utilization))
-    }
-
-    /** Removes the series whose keys match [predicate], keeping the rest. */
-    fun clearSeriesWhere(predicate: (String) -> Boolean) {
-        val remaining = getAllHistory().filterKeys { !predicate(it) }
+    /** Removes [accountId]'s series whose names match [predicate], keeping the rest. */
+    fun clearSeriesWhere(accountId: String, predicate: (String) -> Boolean) {
+        val remaining = getAllSeries().filterKeys { key ->
+            val (owner, series) = splitKey(key) ?: return@filterKeys true
+            !(owner == accountId && predicate(series))
+        }
         saveHistory(remaining)
     }
 
     fun clearHistory() {
         prefs.edit()
+            .remove(KEY_HISTORY_V3)
             .remove(KEY_HISTORY_V2)
             .remove(KEY_HISTORY_LEGACY)
             .apply()
     }
 
+    private fun getAllSeries(): Map<String, List<UsageHistoryEntry>> {
+        migrateLegacyHistory()
+        val json = prefs.getString(KEY_HISTORY_V3, null) ?: return emptyMap()
+        return try {
+            val root = JSONObject(json)
+            root.keys().asSequence().associateWith { key ->
+                parseEntries(root.optJSONArray(key))
+            }.filterValues { it.isNotEmpty() }
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    /**
+     * Older installs stored a single account's history, either as one
+     * array (v1) or as unscoped series (v2). Both belong to the login that
+     * the credential managers carry over as [AccountStore.LEGACY_ACCOUNT_ID].
+     */
     private fun migrateLegacyHistory() {
-        if (prefs.contains(KEY_HISTORY_V2)) return
-        val legacyJson = prefs.getString(KEY_HISTORY_LEGACY, null) ?: return
-        try {
-            val entries = parseEntries(JSONArray(legacyJson))
-            if (entries.isNotEmpty()) {
-                saveHistory(mapOf(SERIES_WEEKLY_ALL to entries))
+        if (prefs.contains(KEY_HISTORY_V3)) return
+        val unscoped: Map<String, List<UsageHistoryEntry>> = try {
+            val v2 = prefs.getString(KEY_HISTORY_V2, null)
+            val v1 = prefs.getString(KEY_HISTORY_LEGACY, null)
+            when {
+                v2 != null -> {
+                    val root = JSONObject(v2)
+                    root.keys().asSequence().associateWith { parseEntries(root.optJSONArray(it)) }
+                }
+                v1 != null -> mapOf(SERIES_WEEKLY_ALL to parseEntries(JSONArray(v1)))
+                else -> emptyMap()
             }
         } catch (e: Exception) {
-            // Corrupt legacy data — drop it
+            emptyMap() // Corrupt legacy data — drop it
         }
-        prefs.edit().remove(KEY_HISTORY_LEGACY).apply()
+        saveHistory(
+            unscoped
+                .filterValues { it.isNotEmpty() }
+                .mapKeys { (series, _) -> scopedKey(AccountStore.LEGACY_ACCOUNT_ID, series) }
+        )
+        prefs.edit().remove(KEY_HISTORY_V2).remove(KEY_HISTORY_LEGACY).apply()
     }
 
     private fun parseEntries(array: JSONArray?): List<UsageHistoryEntry> {
@@ -104,7 +138,15 @@ class UsageHistoryStore(context: Context) {
             }
             root.put(key, array)
         }
-        prefs.edit().putString(KEY_HISTORY_V2, root.toString()).apply()
+        prefs.edit().putString(KEY_HISTORY_V3, root.toString()).apply()
+    }
+
+    private fun scopedKey(accountId: String, series: String) = "$accountId$SCOPE_SEPARATOR$series"
+
+    private fun splitKey(key: String): Pair<String, String>? {
+        val index = key.indexOf(SCOPE_SEPARATOR)
+        if (index <= 0) return null
+        return key.substring(0, index) to key.substring(index + 1)
     }
 
     companion object {
@@ -114,6 +156,8 @@ class UsageHistoryStore(context: Context) {
         private const val PREFS_NAME = "claude_usage_history"
         private const val KEY_HISTORY_LEGACY = "history"
         private const val KEY_HISTORY_V2 = "history_v2"
+        private const val KEY_HISTORY_V3 = "history_v3"
+        private const val SCOPE_SEPARATOR = '|'
         private const val MAX_ENTRIES_PER_SERIES = 2016 // 7 days * 24h * 60min / 5min
         private const val MAX_AGE_MS = 8L * 24 * 60 * 60 * 1000 // 8 days
     }

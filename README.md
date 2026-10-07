@@ -21,6 +21,7 @@ Squeeze your productivity. Monitor your Claude.ai usage in real-time.
 - **Visual Progress Bars** - Clean, color-coded indicators (normal / warning / critical)
 - **Background Updates** - Automatic refresh every 5 minutes via WorkManager
 - **Push Notifications** - Get alerted when usage hits critical thresholds
+- **Multiple Accounts** - Save several Claude and ChatGPT logins and switch between them from the header
 - **Per-model Breakdown** - Track Sonnet, Opus, Cowork, and OAuth Apps usage separately
 - **Overage & Prepaid Tracking** - Monitor extra usage spending and prepaid credits
 - **Secure** - Credentials stored locally with Android EncryptedSharedPreferences
@@ -78,8 +79,8 @@ The APK will be at `app/build/outputs/apk/debug/`.
 ## Privacy & Security
 
 - All credentials stored **locally only** using EncryptedSharedPreferences
-- No analytics, telemetry, or third-party SDKs
-- The app communicates **only** with `claude.ai` official API endpoints
+- No analytics or telemetry of its own. Ads are served by the Google AdMob SDK, which collects the Advertising ID as described in the privacy policy
+- The app communicates with `claude.ai`, with `chatgpt.com` (only if you connect a ChatGPT account), and with Google's ad servers
 - See [PRIVACY_POLICY.md](PRIVACY_POLICY.md) for full details
 
 ## Tech Stack
