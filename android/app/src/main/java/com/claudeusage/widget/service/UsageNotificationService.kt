@@ -15,9 +15,13 @@ import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import com.claudeusage.widget.MainActivity
 import com.claudeusage.widget.R
+import com.claudeusage.widget.data.local.AppPreferences
+import com.claudeusage.widget.data.local.CodexCredentialManager
 import com.claudeusage.widget.data.local.CredentialManager
+import com.claudeusage.widget.data.model.CodexUsageData
 import com.claudeusage.widget.data.model.UsageData
 import com.claudeusage.widget.data.model.UsageMetric
+import com.claudeusage.widget.data.repository.CodexUsageRepository
 import com.claudeusage.widget.data.repository.UsageRepository
 import kotlinx.coroutines.*
 
@@ -25,6 +29,7 @@ class UsageNotificationService : Service() {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val repository = UsageRepository()
+    private val codexRepository = CodexUsageRepository()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -32,12 +37,15 @@ class UsageNotificationService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildSimpleNotification(this, "Loading usage data..."))
         scope.launch {
+            var posted = false
             try {
-                updateNotification()
+                posted = updateNotification()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to update notification", e)
             } finally {
-                stopForeground(STOP_FOREGROUND_DETACH)
+                // Keep the usage notification once posted; otherwise drop the
+                // placeholder rather than leaving "Loading..." behind
+                stopForeground(if (posted) STOP_FOREGROUND_DETACH else STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }
@@ -61,16 +69,34 @@ class UsageNotificationService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private suspend fun updateNotification() {
-        val credentialManager = CredentialManager(applicationContext)
-        val credentials = credentialManager.getCredentials() ?: return
+    /**
+     * Shows the primary provider's usage, falling back to the other provider
+     * when the primary one has no account. Returns false when neither could
+     * be shown.
+     */
+    private suspend fun updateNotification(): Boolean {
+        val prefs = AppPreferences(applicationContext)
+        val notification = if (prefs.primaryMode == AppPreferences.MODE_CHATGPT) {
+            buildCodexNotificationOrNull() ?: buildClaudeNotificationOrNull()
+        } else {
+            buildClaudeNotificationOrNull() ?: buildCodexNotificationOrNull()
+        } ?: return false
 
-        val result = repository.fetchUsageData(credentials)
-        result.onSuccess { data ->
-            val notification = buildUsageNotification(this@UsageNotificationService, data)
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.notify(NOTIFICATION_ID, notification)
-        }
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, notification)
+        return true
+    }
+
+    private suspend fun buildClaudeNotificationOrNull(): Notification? {
+        val credentials = CredentialManager(applicationContext).getCredentials() ?: return null
+        val data = repository.fetchUsageData(credentials).getOrNull() ?: return null
+        return buildUsageNotification(this@UsageNotificationService, data)
+    }
+
+    private suspend fun buildCodexNotificationOrNull(): Notification? {
+        val credentials = CodexCredentialManager(applicationContext).getCredentials() ?: return null
+        val data = codexRepository.fetchUsageData(credentials).getOrNull() ?: return null
+        return buildCodexNotification(this@UsageNotificationService, data)
     }
 
     override fun onDestroy() {
@@ -158,6 +184,43 @@ class UsageNotificationService : Service() {
                 .build()
         }
 
+        fun buildCodexNotification(context: Context, data: CodexUsageData): Notification {
+            val remoteViews = RemoteViews(context.packageName, R.layout.notification_usage)
+
+            data.primaryWindow?.let { window ->
+                val progress = window.usedPercent.toInt().coerceIn(0, 100)
+                remoteViews.setProgressBar(R.id.progress_5h, 100, progress, false)
+                remoteViews.setTextViewText(R.id.percent_5h, String.format("%.1f%%", window.usedPercent))
+                remoteViews.setTextViewText(R.id.time_5h, formatRemaining(window.resetAt))
+            }
+
+            data.secondaryWindow?.let { window ->
+                val progress = window.usedPercent.toInt().coerceIn(0, 100)
+                remoteViews.setProgressBar(R.id.progress_7d, 100, progress, false)
+                remoteViews.setTextViewText(R.id.percent_7d, String.format("%.1f%%", window.usedPercent))
+                remoteViews.setTextViewText(R.id.time_7d, formatRemaining(window.resetAt))
+            }
+
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            return NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setCustomContentView(remoteViews)
+                .setCustomBigContentView(remoteViews)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setSilent(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+                .build()
+        }
+
         fun buildSimpleNotification(context: Context, text: String): Notification {
             val intent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -177,8 +240,19 @@ class UsageNotificationService : Service() {
                 .build()
         }
 
+        private fun formatRemaining(resetAt: java.time.Instant?): String {
+            val target = resetAt ?: return ""
+            val remaining = java.time.Duration.between(java.time.Instant.now(), target)
+            if (remaining.isNegative) return ""
+            return formatRemaining(remaining)
+        }
+
         private fun formatRemaining(metric: UsageMetric): String {
             val remaining = metric.remainingDuration ?: return ""
+            return formatRemaining(remaining)
+        }
+
+        private fun formatRemaining(remaining: java.time.Duration): String {
             if (remaining.seconds <= 0) return ""
             val d = remaining.seconds / 86400
             val h = (remaining.seconds % 86400) / 3600

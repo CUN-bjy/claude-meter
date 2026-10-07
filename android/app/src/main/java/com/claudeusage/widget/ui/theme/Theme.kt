@@ -46,7 +46,10 @@ data class ExtendedColors(
     val textMuted: Color,
     val textSecondary: Color,
     val progressTrack: Color,
-    val dividerColor: Color
+    val dividerColor: Color,
+    val providerClayText: Color,
+    val providerNeutralBorder: Color,
+    val providerNeutralText: Color
 )
 
 val LocalExtendedColors = staticCompositionLocalOf {
@@ -55,7 +58,10 @@ val LocalExtendedColors = staticCompositionLocalOf {
         textMuted = TextMuted,
         textSecondary = TextSecondary,
         progressTrack = ProgressTrack,
-        dividerColor = DarkBackground
+        dividerColor = DarkBackground,
+        providerClayText = ProviderClayTextDark,
+        providerNeutralBorder = ProviderNeutralBorderDark,
+        providerNeutralText = ProviderNeutralTextDark
     )
 }
 
@@ -64,7 +70,10 @@ private val DarkExtendedColors = ExtendedColors(
     textMuted = TextMuted,
     textSecondary = TextSecondary,
     progressTrack = ProgressTrack,
-    dividerColor = DarkBackground
+    dividerColor = DarkBackground,
+    providerClayText = ProviderClayTextDark,
+    providerNeutralBorder = ProviderNeutralBorderDark,
+    providerNeutralText = ProviderNeutralTextDark
 )
 
 private val LightExtendedColors = ExtendedColors(
@@ -72,7 +81,10 @@ private val LightExtendedColors = ExtendedColors(
     textMuted = LightTextMuted,
     textSecondary = LightTextSecondary,
     progressTrack = LightProgressTrack,
-    dividerColor = LightProgressTrack
+    dividerColor = LightProgressTrack,
+    providerClayText = ProviderClayTextLight,
+    providerNeutralBorder = ProviderNeutralBorderLight,
+    providerNeutralText = ProviderNeutralTextLight
 )
 
 object ExtendedTheme {

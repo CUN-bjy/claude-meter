@@ -41,6 +41,17 @@ val GraphCyan = Color(0xFF06B6D4)
 val GraphAmber = Color(0xFFF59E0B)
 val GraphLime = Color(0xFFA3E635)
 
+// Provider sign-in accents: Anthropic's warm clay vs OpenAI's neutral.
+// The two providers differ on a warm/neutral axis, not on purple vs green,
+// so the sign-in choices stop competing for attention.
+val ProviderClay = Color(0xFFD97757)
+val ProviderClayTextDark = Color(0xFFE89478)
+val ProviderClayTextLight = Color(0xFFB85A3C)
+val ProviderNeutralBorderDark = Color(0xFF4A4956)
+val ProviderNeutralBorderLight = Color(0xFFB5B2C0)
+val ProviderNeutralTextDark = Color(0xFFD8D6DE)
+val ProviderNeutralTextLight = Color(0xFF3A3844)
+
 // Progress bar backgrounds
 val ProgressTrack = Color(0xFF2A2A40)
 

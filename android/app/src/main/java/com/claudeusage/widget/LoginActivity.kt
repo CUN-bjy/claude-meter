@@ -229,7 +229,7 @@ private fun WebViewErrorScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Please use \"Enter session key manually\" instead.",
+                text = "Install or enable Android System WebView, then try again.",
                 fontSize = 14.sp,
                 color = ExtendedTheme.colors.textSecondary
             )

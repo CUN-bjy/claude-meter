@@ -153,14 +153,10 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun onManualLogin(sessionKey: String) {
-        onLoginComplete(sessionKey)
-    }
-
     fun onAppForeground() {
         isAppInForeground = true
-        val state = _uiState.value
-        if (state is UiState.Success) {
+        // ChatGPT-only users have no Claude data, but still need the refresh loop
+        if (_uiState.value is UiState.Success || _codexState.value is CodexUiState.Connected) {
             startAutoRefresh()
         }
     }
@@ -196,7 +192,7 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
             checkCredentialsAndLoad()
         } else {
             _uiState.value = UiState.LoginRequired
-            UsageNotificationService.stop(getApplication())
+            refreshPersistentNotification()
         }
     }
 
@@ -333,6 +329,14 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
                 _codexState.value = CodexUiState.Connected(data)
                 recordCodexHistory(accountId, data)
                 ensureCodexLabel(accountId, credentials)
+                startAutoRefresh()
+                // Mirrors the Claude path: in ChatGPT mode this data is what the
+                // persistent notification shows
+                if (appPreferences.notificationEnabled &&
+                    appPreferences.primaryMode == AppPreferences.MODE_CHATGPT
+                ) {
+                    UsageNotificationService.forceUpdate(getApplication())
+                }
                 // Also merge into main UiState if Claude is already loaded
                 val current = _uiState.value
                 if (current is UiState.Success) {
@@ -365,6 +369,7 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
             refreshCodex()
         } else {
             _codexState.value = CodexUiState.NotConnected
+            refreshPersistentNotification()
         }
     }
 
@@ -390,6 +395,26 @@ class UsageViewModel(application: Application) : AndroidViewModel(application) {
     private fun onCodexAccountChanged() {
         refreshAccountLists()
         reloadHistory()
+        // In ChatGPT mode the widget shows the active ChatGPT account
+        try {
+            UsageWidgetReceiver.updateWidget(getApplication())
+        } catch (_: Exception) {
+            // Widget might not be placed
+        }
+    }
+
+    /**
+     * After a logout or disconnect: the persistent notification follows the
+     * primary provider and falls back to the other one, so it only goes away
+     * once no account of either provider is left.
+     */
+    private fun refreshPersistentNotification() {
+        val app = getApplication<Application>()
+        if (!credentialManager.hasCredentials() && !codexCredentialManager.hasCredentials()) {
+            UsageNotificationService.stop(app)
+        } else if (appPreferences.notificationEnabled) {
+            UsageNotificationService.forceUpdate(app)
+        }
     }
 
     /** Removes the previous account's Codex data from the main state. */

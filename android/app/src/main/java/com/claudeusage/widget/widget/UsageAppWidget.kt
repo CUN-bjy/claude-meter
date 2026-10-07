@@ -17,9 +17,13 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.claudeusage.widget.MainActivity
+import com.claudeusage.widget.data.local.AppPreferences
+import com.claudeusage.widget.data.local.CodexCredentialManager
 import com.claudeusage.widget.data.local.CredentialManager
+import com.claudeusage.widget.data.model.CodexUsageData
 import com.claudeusage.widget.data.model.UsageData
 import com.claudeusage.widget.data.model.UsageMetric
+import com.claudeusage.widget.data.repository.CodexUsageRepository
 import com.claudeusage.widget.data.repository.UsageRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -28,23 +32,42 @@ import java.time.Duration
 class UsageAppWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val credentialManager = CredentialManager(context)
-        val repository = UsageRepository()
+        val chatGptMode = AppPreferences(context).primaryMode == AppPreferences.MODE_CHATGPT
 
-        val usageData = try {
-            val credentials = credentialManager.getCredentials()
-            if (credentials != null) {
-                withContext(Dispatchers.IO) {
-                    repository.fetchUsageData(credentials).getOrNull()
-                }
-            } else null
-        } catch (e: Exception) {
-            null
-        }
+        // In ChatGPT mode the widget leads with Codex; it falls back to Claude
+        // when no ChatGPT account is connected.
+        val codexData = if (chatGptMode) fetchCodexData(context) else null
+        val usageData = if (codexData == null) fetchClaudeData(context) else null
 
         provideContent {
-            WidgetContent(usageData)
+            if (codexData != null) {
+                CodexWidgetContent(codexData)
+            } else {
+                WidgetContent(usageData)
+            }
         }
+    }
+
+    private suspend fun fetchClaudeData(context: Context): UsageData? = try {
+        val credentials = CredentialManager(context).getCredentials()
+        if (credentials != null) {
+            withContext(Dispatchers.IO) {
+                UsageRepository().fetchUsageData(credentials).getOrNull()
+            }
+        } else null
+    } catch (e: Exception) {
+        null
+    }
+
+    private suspend fun fetchCodexData(context: Context): CodexUsageData? = try {
+        val credentials = CodexCredentialManager(context).getCredentials()
+        if (credentials != null) {
+            withContext(Dispatchers.IO) {
+                CodexUsageRepository().fetchUsageData(credentials).getOrNull()
+            }
+        } else null
+    } catch (e: Exception) {
+        null
     }
 }
 
@@ -57,12 +80,14 @@ private val TextLight = ColorProvider(Color(0xFFE8E6F0))
 private val TextDim = ColorProvider(Color(0xFFA09BB0))
 private val TextMuted = ColorProvider(Color(0xFF6B6680))
 private val AccentPurple = ColorProvider(Color(0xFF8B6FDB))
+private val CodexGreen = Color(0xFF10A37F)
+private val ClaudePurple = Color(0xFF6B4FBB)
 
-private fun getStatusColor(utilization: Double): Color {
+private fun getStatusColor(utilization: Double, normalColor: Color = ClaudePurple): Color {
     return when {
         utilization >= 90.0 -> Color(0xFFE85454)
         utilization >= 75.0 -> Color(0xFFE8943A)
-        else -> Color(0xFF6B4FBB)
+        else -> normalColor
     }
 }
 
@@ -187,8 +212,22 @@ private fun UsageDataContent(data: UsageData) {
 // -- Usage Card --
 @Composable
 private fun UsageCard(label: String, metric: UsageMetric?) {
-    val utilization = metric?.utilization ?: 0.0
-    val statusColor = getStatusColor(utilization)
+    ValueCard(
+        label = label,
+        utilization = metric?.utilization ?: 0.0,
+        remaining = metric?.remainingDuration,
+        normalColor = ClaudePurple
+    )
+}
+
+@Composable
+private fun ValueCard(
+    label: String,
+    utilization: Double,
+    remaining: Duration?,
+    normalColor: Color
+) {
+    val statusColor = getStatusColor(utilization, normalColor)
 
     Box(
         modifier = GlanceModifier
@@ -227,7 +266,6 @@ private fun UsageCard(label: String, metric: UsageMetric?) {
             WidgetProgressBar(utilization = utilization, statusColor = statusColor)
 
             // Reset time
-            val remaining = metric?.remainingDuration
             if (remaining != null && remaining > Duration.ZERO) {
                 Spacer(modifier = GlanceModifier.height(4.dp))
                 Text(
@@ -307,5 +345,70 @@ private fun getCoachMessage(data: UsageData): String? {
         weeklyUtil < 50.0 && weeklyRemaining != null
             && weeklyRemaining > Duration.ofDays(3) -> "\uD83D\uDE80 Plenty of capacity!"
         else -> null
+    }
+}
+
+// -- Codex (ChatGPT mode) Content --
+@Composable
+private fun CodexWidgetContent(data: CodexUsageData) {
+    Box(
+        modifier = GlanceModifier
+            .fillMaxSize()
+            .background(BgDark)
+            .cornerRadius(16.dp)
+            .clickable(actionStartActivity<MainActivity>())
+            .padding(14.dp)
+    ) {
+        Column(modifier = GlanceModifier.fillMaxSize()) {
+            Row(
+                modifier = GlanceModifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "\u26A1 Codex Meter",
+                    style = TextStyle(
+                        color = TextWhite,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+                Spacer(modifier = GlanceModifier.defaultWeight())
+                Text(
+                    text = getStatusEmoji(data.primaryWindow?.usedPercent ?: 0.0),
+                    style = TextStyle(fontSize = 12.sp)
+                )
+            }
+
+            Spacer(modifier = GlanceModifier.height(10.dp))
+
+            ValueCard(
+                label = "Session (5h)",
+                utilization = data.primaryWindow?.usedPercent ?: 0.0,
+                remaining = data.primaryWindow?.resetAt?.let {
+                    Duration.between(java.time.Instant.now(), it)
+                },
+                normalColor = CodexGreen
+            )
+
+            Spacer(modifier = GlanceModifier.height(6.dp))
+
+            ValueCard(
+                label = "Weekly (7d)",
+                utilization = data.secondaryWindow?.usedPercent ?: 0.0,
+                remaining = data.secondaryWindow?.resetAt?.let {
+                    Duration.between(java.time.Instant.now(), it)
+                },
+                normalColor = CodexGreen
+            )
+
+            if (data.limitReached) {
+                Spacer(modifier = GlanceModifier.height(8.dp))
+                Text(
+                    text = "\u26A0\uFE0F Rate limit reached",
+                    style = TextStyle(color = TextDim, fontSize = 11.sp),
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
