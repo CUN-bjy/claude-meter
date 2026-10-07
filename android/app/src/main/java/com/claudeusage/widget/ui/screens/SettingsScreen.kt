@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.claudeusage.widget.BuildConfig
+import com.claudeusage.widget.data.local.AppPreferences
 import com.claudeusage.widget.ui.components.BannerAd
 import com.claudeusage.widget.ui.theme.*
 import kotlinx.coroutines.launch
@@ -56,6 +57,8 @@ fun SettingsScreen(
     onMetricToggle: (String, Boolean) -> Unit,
     themeMode: String,
     onThemeModeChange: (String) -> Unit,
+    primaryMode: String = AppPreferences.MODE_CLAUDE,
+    onPrimaryModeChange: (String) -> Unit = {},
     onPrivacyPolicyClick: () -> Unit = {},
     claudeAccounts: AccountList = AccountList(),
     onSwitchClaudeAccount: (String) -> Unit = {},
@@ -170,6 +173,55 @@ fun SettingsScreen(
                         onAdd = onAddCodexAccount,
                         onRemove = onRemoveCodexAccount,
                         onRename = onRenameCodexAccount
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Mode section
+            SectionLabel("Mode")
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = ExtendedTheme.colors.cardBackground),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column {
+                    SingleChoiceSegmentedButtonRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 12.dp, top = 10.dp)
+                    ) {
+                        val modes = listOf(
+                            AppPreferences.MODE_CLAUDE to "Claude",
+                            AppPreferences.MODE_CHATGPT to "ChatGPT"
+                        )
+                        modes.forEachIndexed { index, (key, label) ->
+                            val accent = if (key == AppPreferences.MODE_CHATGPT) CodexGreen else ClaudePurple
+                            SegmentedButton(
+                                selected = primaryMode == key,
+                                onClick = { onPrimaryModeChange(key) },
+                                shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                                colors = SegmentedButtonDefaults.colors(
+                                    activeContainerColor = accent,
+                                    activeContentColor = Color.White,
+                                    inactiveContainerColor = Color.Transparent,
+                                    inactiveContentColor = ExtendedTheme.colors.textSecondary
+                                )
+                            ) {
+                                Text(text = label, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                    Text(
+                        text = if (primaryMode == AppPreferences.MODE_CHATGPT) {
+                            "ChatGPT/Codex usage leads the main screen, widget and notification. Claude is shown below it."
+                        } else {
+                            "Claude usage leads the main screen, widget and notification. ChatGPT/Codex is shown below it."
+                        },
+                        color = ExtendedTheme.colors.textMuted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                     )
                 }
             }

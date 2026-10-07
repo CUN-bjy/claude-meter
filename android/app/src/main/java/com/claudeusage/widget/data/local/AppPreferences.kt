@@ -61,6 +61,15 @@ class AppPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_COACH_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_COACH_ENABLED, value).apply()
 
+    /**
+     * Which provider the app is centered on: [MODE_CLAUDE] (default) or [MODE_CHATGPT].
+     * The primary provider gets the main cards, the widget and the notification;
+     * the other one is shown as a compact secondary section.
+     */
+    var primaryMode: String
+        get() = prefs.getString(KEY_PRIMARY_MODE, MODE_CLAUDE) ?: MODE_CLAUDE
+        set(value) = prefs.edit().putString(KEY_PRIMARY_MODE, value).apply()
+
     companion object {
         private const val PREFS_NAME = "claude_app_preferences"
         private const val KEY_NOTIFICATION_ENABLED = "notification_enabled"
@@ -74,6 +83,7 @@ class AppPreferences(context: Context) {
         private const val KEY_COACH_ENABLED = "coach_enabled"
         private const val KEY_ACCOUNT_HINT_DISMISSED = "account_hint_dismissed"
         private const val KEY_NOTIFICATION_PROMPT_SHOWN = "notification_prompt_shown"
+        private const val KEY_PRIMARY_MODE = "primary_mode"
 
         /**
          * App-level toggle key for the Codex/GPT card. Unlike the other
@@ -81,9 +91,13 @@ class AppPreferences(context: Context) {
          * screen that honours metric visibility shares this constant.
          */
         const val CODEX_METRIC_KEY = "codex_usage"
+        const val CLAUDE_METRIC_KEY = "claude_usage"
 
         const val THEME_DARK = "dark"
         const val THEME_LIGHT = "light"
         const val THEME_SYSTEM = "system"
+
+        const val MODE_CLAUDE = "claude"
+        const val MODE_CHATGPT = "chatgpt"
     }
 }
