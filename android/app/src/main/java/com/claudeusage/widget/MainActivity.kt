@@ -137,7 +137,8 @@ class MainActivity : ComponentActivity() {
 
                 // Ask for notifications once, after the first successful load, with
                 // context, instead of a bare system dialog before the user has signed in
-                val isLoaded = uiState is UiState.Success
+                val isLoaded = uiState is UiState.Success ||
+                    codexState is CodexUiState.Connected
                 LaunchedEffect(isLoaded) {
                     if (isLoaded && shouldAskForNotifications()) showNotificationPrompt = true
                 }
@@ -178,7 +179,7 @@ class MainActivity : ComponentActivity() {
                             onLogout = {
                                 interstitialAdManager.showThen(this@MainActivity) {
                                     viewModel.logout()
-                                    cancelUpdatesIfNoClaudeAccount()
+                                    cancelUpdatesIfNoAccounts()
                                 }
                             },
                             onLoginClick = { launchLogin() },
@@ -188,6 +189,7 @@ class MainActivity : ComponentActivity() {
                             onCodexLogout = {
                                 interstitialAdManager.showThen(this@MainActivity) {
                                     viewModel.logoutCodex()
+                                    cancelUpdatesIfNoAccounts()
                                 }
                             },
                             claudeAccounts = claudeAccounts,
@@ -263,7 +265,7 @@ class MainActivity : ComponentActivity() {
                             onRemoveClaudeAccount = { id ->
                                 interstitialAdManager.showThen(this@MainActivity) {
                                     viewModel.removeClaudeAccount(id)
-                                    if (cancelUpdatesIfNoClaudeAccount()) {
+                                    if (cancelUpdatesIfNoAccounts()) {
                                         // Nothing left to show here; the usage screen offers login
                                         currentScreen = Screen.Usage
                                     }
@@ -277,6 +279,10 @@ class MainActivity : ComponentActivity() {
                             onRemoveCodexAccount = { id ->
                                 interstitialAdManager.showThen(this@MainActivity) {
                                     viewModel.removeCodexAccount(id)
+                                    if (cancelUpdatesIfNoAccounts()) {
+                                        // Nothing left to show here; the usage screen offers login
+                                        currentScreen = Screen.Usage
+                                    }
                                 }
                             },
                             onBack = { currentScreen = Screen.Usage }
@@ -331,9 +337,14 @@ class MainActivity : ComponentActivity() {
         viewModel.onAppBackground()
     }
 
-    /** Stops background updates once no Claude account is left; returns true if it did. */
-    private fun cancelUpdatesIfNoClaudeAccount(): Boolean {
+    /**
+     * Stops background updates once no account of either provider is left;
+     * returns true if it did. The worker serves whichever provider is
+     * connected, so a ChatGPT-only user keeps their widget and notification.
+     */
+    private fun cancelUpdatesIfNoAccounts(): Boolean {
         if (viewModel.claudeAccounts.value.accounts.isNotEmpty()) return false
+        if (viewModel.codexAccounts.value.accounts.isNotEmpty()) return false
         UsageUpdateScheduler.cancel(applicationContext)
         return true
     }

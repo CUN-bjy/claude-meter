@@ -265,7 +265,13 @@ fun UsageScreen(
                         onCodexLoginClick = onCodexLoginClick,
                         onLoginClick = onLoginClick,
                         claudeAccounts = claudeAccounts,
-                        onSwitchAccount = onSwitchAccount
+                        onSwitchAccount = onSwitchAccount,
+                        showAccountHint = showAccountHint && codexAccounts.accounts.isNotEmpty(),
+                        onAccountHintClick = {
+                            onDismissAccountHint()
+                            headerMenuOpen.value = true
+                        },
+                        onDismissAccountHint = onDismissAccountHint
                     )
                     else -> UsageContent(
                         claudeState = uiState,
@@ -1169,7 +1175,10 @@ private fun ChatGptContent(
     onCodexLoginClick: () -> Unit,
     onLoginClick: () -> Unit,
     claudeAccounts: AccountList = AccountList(),
-    onSwitchAccount: (String) -> Unit = {}
+    onSwitchAccount: (String) -> Unit = {},
+    showAccountHint: Boolean = false,
+    onAccountHintClick: () -> Unit = {},
+    onDismissAccountHint: () -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
 
@@ -1179,6 +1188,14 @@ private fun ChatGptContent(
             .verticalScroll(scrollState)
             .padding(horizontal = 20.dp, vertical = 8.dp)
     ) {
+        // Same one-time pointer to the account menu as in Claude mode
+        CoachBanner(
+            notification = if (showAccountHint) ACCOUNT_HINT else null,
+            onClick = onAccountHintClick,
+            onDismiss = onDismissAccountHint,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+
         when (codexState) {
             is CodexUiState.Connected -> {
                 val data = codexState.data

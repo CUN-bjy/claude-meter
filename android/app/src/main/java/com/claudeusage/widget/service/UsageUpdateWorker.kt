@@ -21,26 +21,19 @@ class UsageUpdateWorker(
         val prefs = AppPreferences(applicationContext)
         val chatGptMode = prefs.primaryMode == AppPreferences.MODE_CHATGPT
 
-        // The notification follows the primary provider; in ChatGPT mode we fall
-        // back to Claude when no ChatGPT account is connected.
-        var notification: Notification? = null
-
-        if (chatGptMode) {
-            val codexCredentials = CodexCredentialManager(applicationContext).getCredentials()
-            if (codexCredentials != null) {
-                val codexData = CodexUsageRepository().fetchUsageData(codexCredentials).getOrNull()
-                    ?: return Result.retry()
-                notification = UsageNotificationService
-                    .buildCodexNotification(applicationContext, codexData)
-            }
+        // The notification follows the primary provider and falls back to the
+        // other one, so a user with a single account of either kind keeps
+        // getting updates whichever mode they are in.
+        val providers = if (chatGptMode) {
+            listOf(::fetchCodexNotification, ::fetchClaudeNotification)
+        } else {
+            listOf(::fetchClaudeNotification, ::fetchCodexNotification)
         }
-
-        if (notification == null) {
-            val credentials = CredentialManager(applicationContext).getCredentials()
-                ?: return if (chatGptMode) Result.success() else Result.failure()
-            val data = UsageRepository().fetchUsageData(credentials).getOrNull()
-                ?: return Result.retry()
-            notification = UsageNotificationService.buildUsageNotification(applicationContext, data)
+        var notification: Notification? = null
+        for (fetch in providers) {
+            val result = fetch() ?: continue // no account for this provider
+            notification = result.getOrNull() ?: return Result.retry()
+            break
         }
 
         // Trigger widget update (the widget fetches for the active mode itself)
@@ -53,14 +46,35 @@ class UsageUpdateWorker(
         // Update persistent notification if enabled
         if (prefs.notificationEnabled) {
             try {
-                UsageNotificationService.ensureChannel(applicationContext)
                 val manager = applicationContext.getSystemService(NotificationManager::class.java)
-                manager.notify(UsageNotificationService.NOTIFICATION_ID, notification)
+                if (notification == null) {
+                    // No account of either provider is left to show
+                    manager.cancel(UsageNotificationService.NOTIFICATION_ID)
+                } else {
+                    UsageNotificationService.ensureChannel(applicationContext)
+                    manager.notify(UsageNotificationService.NOTIFICATION_ID, notification)
+                }
             } catch (_: Exception) {
                 // Notification update is best-effort
             }
         }
 
         return Result.success()
+    }
+
+    /** Null when no Claude account is saved; otherwise the fetch outcome. */
+    private suspend fun fetchClaudeNotification(): kotlin.Result<Notification>? {
+        val credentials = CredentialManager(applicationContext).getCredentials() ?: return null
+        return UsageRepository().fetchUsageData(credentials).map { data ->
+            UsageNotificationService.buildUsageNotification(applicationContext, data)
+        }
+    }
+
+    /** Null when no ChatGPT account is saved; otherwise the fetch outcome. */
+    private suspend fun fetchCodexNotification(): kotlin.Result<Notification>? {
+        val credentials = CodexCredentialManager(applicationContext).getCredentials() ?: return null
+        return CodexUsageRepository().fetchUsageData(credentials).map { data ->
+            UsageNotificationService.buildCodexNotification(applicationContext, data)
+        }
     }
 }

@@ -37,12 +37,15 @@ class UsageNotificationService : Service() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildSimpleNotification(this, "Loading usage data..."))
         scope.launch {
+            var posted = false
             try {
-                updateNotification()
+                posted = updateNotification()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to update notification", e)
             } finally {
-                stopForeground(STOP_FOREGROUND_DETACH)
+                // Keep the usage notification once posted; otherwise drop the
+                // placeholder rather than leaving "Loading..." behind
+                stopForeground(if (posted) STOP_FOREGROUND_DETACH else STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }
@@ -66,16 +69,22 @@ class UsageNotificationService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private suspend fun updateNotification() {
+    /**
+     * Shows the primary provider's usage, falling back to the other provider
+     * when the primary one has no account. Returns false when neither could
+     * be shown.
+     */
+    private suspend fun updateNotification(): Boolean {
         val prefs = AppPreferences(applicationContext)
         val notification = if (prefs.primaryMode == AppPreferences.MODE_CHATGPT) {
             buildCodexNotificationOrNull() ?: buildClaudeNotificationOrNull()
         } else {
-            buildClaudeNotificationOrNull()
-        } ?: return
+            buildClaudeNotificationOrNull() ?: buildCodexNotificationOrNull()
+        } ?: return false
 
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification)
+        return true
     }
 
     private suspend fun buildClaudeNotificationOrNull(): Notification? {
