@@ -35,7 +35,10 @@ fun UsageProgressBar(
     statusLevel: StatusLevel,
     remainingDuration: Duration?,
     totalWindowHours: Double = 5.0,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // Colour for the normal range; warning/critical stay the shared status colours
+    normalColor: Color = StatusNormal,
+    normalGradient: List<Color> = listOf(ClaudePurpleDark, ClaudePurple, ClaudePurpleLight)
 ) {
     val animatedProgress by animateFloatAsState(
         targetValue = (utilization / 100.0).toFloat().coerceIn(0f, 1f),
@@ -57,15 +60,13 @@ fun UsageProgressBar(
     )
 
     val barColor = when (statusLevel) {
-        StatusLevel.NORMAL -> StatusNormal
+        StatusLevel.NORMAL -> normalColor
         StatusLevel.WARNING -> StatusWarning
         StatusLevel.CRITICAL -> StatusCritical
     }
 
     val gradient = when (statusLevel) {
-        StatusLevel.NORMAL -> Brush.horizontalGradient(
-            colors = listOf(ClaudePurpleDark, ClaudePurple, ClaudePurpleLight)
-        )
+        StatusLevel.NORMAL -> Brush.horizontalGradient(colors = normalGradient)
         StatusLevel.WARNING -> Brush.horizontalGradient(
             colors = listOf(Color(0xFFCC7A20), StatusWarning, Color(0xFFF0B060))
         )
@@ -128,7 +129,7 @@ fun UsageProgressBar(
                 // Elapsed time portion (light purple, drawn first so usage overlaps)
                 if (animatedElapsed > 0f) {
                     drawRoundRect(
-                        color = ClaudePurple.copy(alpha = 0.25f),
+                        color = normalColor.copy(alpha = 0.25f),
                         size = Size(size.width * animatedElapsed, size.height),
                         cornerRadius = cornerRadius
                     )

@@ -607,7 +607,9 @@ private fun UsageCard(
     title: String,
     subtitle: String,
     metric: com.claudeusage.widget.data.model.UsageMetric,
-    totalWindowHours: Double = 5.0
+    totalWindowHours: Double = 5.0,
+    normalColor: Color = StatusNormal,
+    normalGradient: List<Color> = listOf(ClaudePurpleDark, ClaudePurple, ClaudePurpleLight)
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -642,7 +644,9 @@ private fun UsageCard(
                 utilization = metric.utilization,
                 statusLevel = metric.statusLevel,
                 remainingDuration = metric.remainingDuration,
-                totalWindowHours = totalWindowHours
+                totalWindowHours = totalWindowHours,
+                normalColor = normalColor,
+                normalGradient = normalGradient
             )
         }
     }
@@ -1208,14 +1212,16 @@ private fun ChatGptContent(
                 CodexPrimaryCard(
                     title = "Current Session",
                     subtitle = "5-hour window",
-                    window = data.primaryWindow
+                    window = data.primaryWindow,
+                    defaultWindowHours = 5.0
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
                 CodexPrimaryCard(
                     title = "Weekly Limit",
                     subtitle = "7-day window",
-                    window = data.secondaryWindow
+                    window = data.secondaryWindow,
+                    defaultWindowHours = 168.0
                 )
 
                 if (data.planType != null) {
@@ -1291,101 +1297,32 @@ private fun LimitBanner(text: String) {
     }
 }
 
-/** Codex equivalent of [UsageCard] - the headline card in ChatGPT mode. */
+/**
+ * The Codex headline card is [UsageCard] in the provider's colour, so both
+ * modes read the same: same figure size, timer, bar and reset line.
+ */
 @Composable
 private fun CodexPrimaryCard(
     title: String,
     subtitle: String,
-    window: CodexUsageData.UsageWindow?
+    window: CodexUsageData.UsageWindow?,
+    defaultWindowHours: Double
 ) {
-    val usedPercent = window?.usedPercent ?: 0.0
-    val animatedProgress by animateFloatAsState(
-        targetValue = (usedPercent / 100.0).toFloat().coerceIn(0f, 1f),
-        animationSpec = tween(durationMillis = 800),
-        label = "codex_primary_$title"
+    val windowHours = window?.limitWindowSeconds
+        ?.takeIf { it > 0 }
+        ?.let { it / 3600.0 }
+        ?: defaultWindowHours
+    UsageCard(
+        title = title,
+        subtitle = subtitle,
+        metric = com.claudeusage.widget.data.model.UsageMetric(
+            utilization = window?.usedPercent ?: 0.0,
+            resetsAt = window?.resetAt
+        ),
+        totalWindowHours = windowHours,
+        normalColor = CodexGreen,
+        normalGradient = listOf(CodexGreenDark, CodexGreen, CodexGreenLight)
     )
-    val accent = when {
-        usedPercent >= 90.0 -> StatusCritical
-        usedPercent >= 75.0 -> StatusWarning
-        else -> CodexGreen
-    }
-    val gradient = when {
-        usedPercent >= 90.0 -> Brush.horizontalGradient(
-            listOf(Color(0xFFCC3030), StatusCritical, Color(0xFFF07070))
-        )
-        usedPercent >= 75.0 -> Brush.horizontalGradient(
-            listOf(Color(0xFFCC7A20), StatusWarning, Color(0xFFF0B060))
-        )
-        else -> Brush.horizontalGradient(
-            listOf(CodexGreenDark, CodexGreen, CodexGreenLight)
-        )
-    }
-    val progressTrackColor = ExtendedTheme.colors.progressTrack
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = ExtendedTheme.colors.cardBackground),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = title,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = subtitle,
-                        color = ExtendedTheme.colors.textMuted,
-                        fontSize = 11.sp
-                    )
-                }
-                Text(
-                    text = "${String.format("%.1f", usedPercent)}%",
-                    color = accent,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(12.dp)
-                    .clip(RoundedCornerShape(6.dp))
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val cr = CornerRadius(6.dp.toPx())
-                    drawRoundRect(color = progressTrackColor, cornerRadius = cr)
-                    if (animatedProgress > 0f) {
-                        drawRoundRect(
-                            brush = gradient,
-                            size = Size(size.width * animatedProgress, size.height),
-                            cornerRadius = cr
-                        )
-                    }
-                }
-            }
-
-            val resetText = window?.resetAt
-                ?.let { Duration.between(Instant.now(), it) }
-                ?.let { formatResetText(it) }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = resetText ?: "No active window",
-                color = ExtendedTheme.colors.textMuted,
-                fontSize = 11.sp
-            )
-        }
-    }
 }
 
 /** Connect prompt in the primary slot, for whichever provider is missing. */
